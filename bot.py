@@ -108,17 +108,13 @@ async def healthz():
 async def metadata():
     """Bot identity — update team info here or via .env."""
     return {
-        "team_name": os.environ.get("TEAM_NAME", "MULTIBOTS"),
-        "team_members": os.environ.get("TEAM_MEMBERS", "Developer").split(","),
-        "model": os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
-        "approach": (
-            "Context-aware LLM composition with per-trigger prompt routing, "
-            "post-generation validation, and adaptive re-prompting. "
-            "Uses Anthropic Claude with structured JSON output enforcement."
-        ),
-        "contact_email": os.environ.get("CONTACT_EMAIL", "team@multibots.dev"),
+        "team_name": "MULTIBOTS",
+        "team_members": ["Developer"],
+        "model": "llama-3.3-70b-versatile",
+        "approach": "Context-aware LLM composition with strict 50-point rubric prompt optimization. Uses Groq Llama-3.3 with structured JSON output enforcement and an internal thinking step.",
+        "contact_email": "team@multibots.dev",
         "version": "1.0.0",
-        "submitted_at": datetime.now(UTC).isoformat(),
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
     }
 
 

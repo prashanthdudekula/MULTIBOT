@@ -11,3 +11,5 @@ services:
         value: "llama-3.3-70b-versatile"
       - key: TEAM_NAME
         value: "MULTIBOTS"
+      - key: NODE_VERSION
+        value: "20"

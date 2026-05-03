@@ -9,6 +9,7 @@ from typing import Any, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from state import store
@@ -437,6 +438,14 @@ def _detect_intent(message: str, history: List[dict]) -> str:
         return "ask_for_time"
 
     return "engaging"
+
+# ============================================================================
+# Frontend UI Serving
+# ============================================================================
+
+# Mount the compiled React UI so it is accessible at the root URL (/)
+if os.path.exists("frontend/dist"):
+    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 
 
 # ============================================================================

@@ -7,11 +7,15 @@ import os
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-UTC = timezone.utc
-
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import BaseModel
+
+from state import store
+from seed_data import load_seed_data, MERCHANTS, TRIGGERS
+from composer import compose_message, compose_followup
+
+UTC = timezone.utc
 
 load_dotenv()
 
@@ -27,8 +31,9 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Import singleton store (in-memory; swap for Redis/SQLite in production)
-from state import store
+# Load seed data on startup
+_seed_result = load_seed_data(store)
+logger.info(f"Seed data loaded: {_seed_result}")
 
 # ============================================================================
 # Pydantic models
@@ -119,6 +124,37 @@ async def metadata():
 
 
 # ============================================================================
+# 2b. GET /v1/merchants — list all seeded merchants for frontend selector
+# ============================================================================
+
+
+@app.get("/v1/merchants")
+async def list_merchants():
+    """Return all merchant contexts for the frontend selector."""
+    merchants = store.get_all_contexts_by_scope("merchant")
+    result = []
+    for m in merchants:
+        mid = m.get("merchant_id", "unknown")
+        identity = m.get("identity", {})
+        merchant_triggers = [
+            t["payload"] for t in TRIGGERS
+            if t["payload"].get("merchant_id") == mid
+        ]
+        result.append({
+            "merchant_id": mid,
+            "name": identity.get("name", mid),
+            "owner": identity.get("owner_first_name", ""),
+            "category": m.get("category_slug", ""),
+            "language": identity.get("language_pref", "en"),
+            "performance": m.get("performance", {}),
+            "offers": [o.get("title") for o in m.get("offers", []) if o.get("status") == "active"],
+            "signals": m.get("signals", []),
+            "triggers": [{"id": t.get("kind", ""), "kind": t.get("kind", "")} for t in merchant_triggers],
+        })
+    return {"merchants": result}
+
+
+# ============================================================================
 # 3. POST /v1/context
 # ============================================================================
 
@@ -160,7 +196,6 @@ async def tick(body: TickRequest):
     suppressed, compose a MessageAction via the LLM pipeline.
     Returns at most ONE action per merchant per tick to avoid spam.
     """
-    from composer import compose_message
 
     actions: List[MessageAction] = []
     merchants = store.get_all_contexts_by_scope("merchant")
@@ -275,7 +310,6 @@ async def reply(body: ReplyRequest):
     Handle an inbound merchant or customer reply.
     Detects intent and composes the appropriate next action.
     """
-    from composer import compose_followup
 
     # Record incoming turn
     store.add_turn(body.conversation_id, body.from_role, body.message)

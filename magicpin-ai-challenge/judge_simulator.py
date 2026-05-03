@@ -36,7 +36,7 @@ LLM_MODEL = ""  # <-- Optional: specify model or leave empty for default
 OLLAMA_URL = "http://localhost:11434"
 
 # Which test to run by default
-TEST_SCENARIO = "all"
+TEST_SCENARIO = "full_evaluation"
 
 # =============================================================================
 # ██████  END OF CONFIGURATION - DON'T EDIT BELOW THIS LINE ██████
@@ -417,20 +417,20 @@ class BotClient:
 
     def push_context(self, scope, cid, version, payload):
         return self._request("POST", "/v1/context", 10, {
-            "scope": scope, "context_id": cid, "version": version,
-            "payload": payload, "delivered_at": datetime.utcnow().isoformat() + "Z"
+            "scope": scope, "context_id": cid, "version": int(time.time()),
+            "payload": payload, "delivered_at": datetime.now().isoformat() + "Z"
         })
 
     def tick(self, triggers):
-        return self._request("POST", "/v1/tick", 15, {
-            "now": datetime.utcnow().isoformat() + "Z", "available_triggers": triggers
+        return self._request("POST", "/v1/tick", 45, {
+            "now": datetime.now().isoformat() + "Z", "available_triggers": triggers
         })
 
     def reply(self, conv_id, merchant_id, message, turn):
-        return self._request("POST", "/v1/reply", 15, {
+        return self._request("POST", "/v1/reply", 45, {
             "conversation_id": conv_id, "merchant_id": merchant_id, "customer_id": None,
             "from_role": "merchant", "message": message,
-            "received_at": datetime.utcnow().isoformat() + "Z", "turn_number": turn
+            "received_at": datetime.now().isoformat() + "Z", "turn_number": turn
         })
 
 # =============================================================================
@@ -841,6 +841,7 @@ class JudgeSimulator:
         customer = self.dataset.customers.get(cid) if cid else None
         category = self.dataset.categories.get(merchant.get("category_slug", ""), {})
 
+        time.sleep(4)  # Prevent HTTP 429 Too Many Requests from Groq API
         score = self.scorer.score(action, category, merchant, trigger, customer)
         self.all_scores.append(score)
 

@@ -1,96 +1,84 @@
 import { useState, useEffect, useRef } from 'react';
 import './index.css';
 
+const CATEGORY_ICONS = {
+  dentists: '🦷',
+  gyms: '💪',
+  pharmacies: '💊',
+  restaurants: '🍽️',
+  salons: '💇',
+};
+
+const CATEGORY_COLORS = {
+  dentists: '#4fc3f7',
+  gyms: '#ff7043',
+  pharmacies: '#66bb6a',
+  restaurants: '#ffa726',
+  salons: '#ab47bc',
+};
+
 function App() {
+  const [merchants, setMerchants] = useState([]);
+  const [selectedMerchant, setSelectedMerchant] = useState(null);
+  const [filterCategory, setFilterCategory] = useState('all');
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [convId, setConvId] = useState('');
   const messagesEndRef = useRef(null);
-
-  const MERCHANT_ID = "m_001";
-  const TRIGGER_ID = `tr_perf_${Date.now()}`;
-  const CONV_ID = `conv_${MERCHANT_ID}_${TRIGGER_ID}`;
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  useEffect(() => { scrollToBottom(); }, [messages, isLoading]);
+
+  // Fetch merchants on mount
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, isLoading]);
-
-  useEffect(() => {
-    const initVera = async () => {
-      try {
-        const nowIso = new Date().toISOString();
-        
-        await fetch('/v1/context', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            scope: 'category',
-            context_id: 'dentists',
-            version: Math.floor(Date.now() / 1000),
-            payload: { slug: "dentists", voice: { tone: "professional" } },
-            delivered_at: nowIso
-          })
-        });
-
-        await fetch('/v1/context', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            scope: 'merchant',
-            context_id: MERCHANT_ID,
-            version: Math.floor(Date.now() / 1000),
-            payload: { category_slug: "dentists", identity: { name: "Dr. Smith" }, language_pref: "en" },
-            delivered_at: nowIso
-          })
-        });
-
-        await fetch('/v1/context', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            scope: 'trigger',
-            context_id: TRIGGER_ID,
-            version: Math.floor(Date.now() / 1000),
-            payload: {
-              kind: "perf_spike",
-              merchant_id: MERCHANT_ID,
-              payload: { delta_pct: 45, metric: "profile views", reason: "weekend surge" }
-            },
-            delivered_at: nowIso
-          })
-        });
-
-        setIsLoading(true);
-        const res = await fetch('/v1/tick', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            now: nowIso,
-            available_triggers: [TRIGGER_ID]
-          })
-        });
-        
-        const data = await res.json();
-        if (data.actions && data.actions.length > 0) {
-          setMessages([{ role: 'vera', text: data.actions[0].body }]);
-        }
-      } catch (err) {
-        console.error("Failed to init Vera:", err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    initVera();
+    fetch('/v1/merchants')
+      .then(r => r.json())
+      .then(data => setMerchants(data.merchants || []))
+      .catch(err => console.error("Failed to fetch merchants:", err));
   }, []);
+
+  // Start conversation when merchant is selected
+  const selectMerchant = async (merchant) => {
+    setSelectedMerchant(merchant);
+    setMessages([]);
+    setIsLoading(true);
+
+    const cid = `conv_${merchant.merchant_id}_${Date.now()}`;
+    setConvId(cid);
+
+    // Send a greeting to get Vera started
+    try {
+      const res = await fetch('/v1/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversation_id: cid,
+          merchant_id: merchant.merchant_id,
+          message: `Hi, I'm ${merchant.owner} from ${merchant.name}. What can you help me with?`,
+          turn_number: 1,
+          from_role: 'merchant',
+          received_at: new Date().toISOString(),
+        }),
+      });
+      const data = await res.json();
+      setMessages([
+        { role: 'user', text: `Hi, I'm ${merchant.owner} from ${merchant.name}. What can you help me with?` },
+        ...(data.action === 'send' ? [{ role: 'vera', text: data.body }] : []),
+      ]);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || !selectedMerchant) return;
 
     const userText = input.trim();
     setMessages(prev => [...prev, { role: 'user', text: userText }]);
@@ -102,20 +90,21 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          conversation_id: CONV_ID,
-          merchant_id: MERCHANT_ID,
+          conversation_id: convId,
+          merchant_id: selectedMerchant.merchant_id,
           message: userText,
           turn_number: messages.length + 1,
           from_role: 'merchant',
-          received_at: new Date().toISOString()
-        })
+          received_at: new Date().toISOString(),
+        }),
       });
-      
       const data = await res.json();
       if (data.action === "send") {
         setMessages(prev => [...prev, { role: 'vera', text: data.body }]);
       } else if (data.action === "end") {
-        setMessages(prev => [...prev, { role: 'vera', text: "[Conversation ended by Vera]" }]);
+        setMessages(prev => [...prev, { role: 'vera', text: "Thanks for chatting! Feel free to reach out anytime. 👋" }]);
+      } else if (data.action === "wait") {
+        setMessages(prev => [...prev, { role: 'vera', text: "No worries, I'll check back later! ⏳" }]);
       }
     } catch (err) {
       console.error(err);
@@ -124,62 +113,166 @@ function App() {
     }
   };
 
+  const goBack = () => {
+    setSelectedMerchant(null);
+    setMessages([]);
+    setConvId('');
+  };
+
+  const filteredMerchants = filterCategory === 'all'
+    ? merchants
+    : merchants.filter(m => m.category === filterCategory);
+
+  const categories = ['all', ...new Set(merchants.map(m => m.category))];
+
+  // ---- MERCHANT LIST VIEW ----
+  if (!selectedMerchant) {
+    return (
+      <>
+        <div className="ambient-bg">
+          <div className="orb-1"></div>
+          <div className="orb-2"></div>
+        </div>
+        <div className="app-wrapper select-view">
+          <div className="select-container">
+            <div className="select-header">
+              <h1 className="hero-title">Meet <span className="gradient-text">Vera</span></h1>
+              <p className="hero-subtitle">The intelligent growth engine for MagicPin merchants. Select a merchant below to start chatting.</p>
+            </div>
+
+            {/* Category Filter Pills */}
+            <div className="category-pills">
+              {categories.map(cat => (
+                <button
+                  key={cat}
+                  className={`pill ${filterCategory === cat ? 'pill-active' : ''}`}
+                  onClick={() => setFilterCategory(cat)}
+                >
+                  {cat === 'all' ? '🏪 All' : `${CATEGORY_ICONS[cat] || '📦'} ${cat.charAt(0).toUpperCase() + cat.slice(1)}`}
+                </button>
+              ))}
+            </div>
+
+            {/* Merchant Cards Grid */}
+            <div className="merchant-grid">
+              {filteredMerchants.map(m => (
+                <div
+                  key={m.merchant_id}
+                  className="merchant-card"
+                  onClick={() => selectMerchant(m)}
+                  style={{ '--accent': CATEGORY_COLORS[m.category] || '#888' }}
+                >
+                  <div className="mc-header">
+                    <span className="mc-icon">{CATEGORY_ICONS[m.category] || '📦'}</span>
+                    <span className="mc-category" style={{ color: CATEGORY_COLORS[m.category] }}>
+                      {m.category}
+                    </span>
+                  </div>
+                  <h3 className="mc-name">{m.name}</h3>
+                  <p className="mc-owner">Owner: {m.owner}</p>
+                  <div className="mc-stats">
+                    <span>👀 {m.performance.views_last_30d || 0} views</span>
+                    <span>📈 CTR {((m.performance.ctr || 0) * 100).toFixed(1)}%</span>
+                  </div>
+                  {m.offers.length > 0 && (
+                    <div className="mc-offers">
+                      {m.offers.slice(0, 2).map((o, i) => (
+                        <span key={i} className="mc-offer-tag">{o}</span>
+                      ))}
+                    </div>
+                  )}
+                  {m.signals.length > 0 && (
+                    <div className="mc-signals">
+                      {m.signals.slice(0, 2).map((s, i) => (
+                        <span key={i} className="mc-signal">{s.replace(/_/g, ' ')}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mc-lang">{m.language === 'hi' ? '🇮🇳 Hindi' : '🌐 English'}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // ---- CHAT VIEW ----
   return (
     <>
-      {/* Ambient Animated Orbs */}
       <div className="ambient-bg">
         <div className="orb-1"></div>
         <div className="orb-2"></div>
       </div>
-
       <div className="app-wrapper">
-        
-        {/* Sidebar Information */}
+
+        {/* Sidebar with merchant info */}
         <aside className="info-sidebar">
           <div>
-            <h1 className="hero-title">Meet <span className="gradient-text">Vera</span></h1>
-            <p className="hero-subtitle">The intelligent growth engine for MagicPin merchants, powered by Groq Llama-3.3.</p>
+            <button className="back-btn" onClick={goBack}>← All Merchants</button>
+            <h1 className="hero-title">
+              <span className="gradient-text">{selectedMerchant.name}</span>
+            </h1>
+            <p className="hero-subtitle">
+              {CATEGORY_ICONS[selectedMerchant.category]} {selectedMerchant.category.charAt(0).toUpperCase() + selectedMerchant.category.slice(1)} · Owner: {selectedMerchant.owner}
+            </p>
           </div>
 
           <div className="info-card">
-            <span className="card-number">01. Context Aware</span>
-            <h3>Dynamic Framing</h3>
-            <p>Vera adapts her tone perfectly depending on the category and merchant performance signals.</p>
+            <span className="card-number">Performance</span>
+            <h3>📊 Stats</h3>
+            <p>Views: {selectedMerchant.performance.views_last_30d || 'N/A'}</p>
+            <p>CTR: {((selectedMerchant.performance.ctr || 0) * 100).toFixed(1)}%</p>
+            {selectedMerchant.performance.bookings_last_30d && (
+              <p>Bookings: {selectedMerchant.performance.bookings_last_30d}</p>
+            )}
+            {selectedMerchant.performance.orders_last_30d && (
+              <p>Orders: {selectedMerchant.performance.orders_last_30d}</p>
+            )}
           </div>
 
-          <div className="info-card">
-            <span className="card-number">02. Data Driven</span>
-            <h3>Performance Spikes</h3>
-            <p>She analyzes weekend surges and dips to suggest actionable campaigns instantly.</p>
-          </div>
+          {selectedMerchant.offers.length > 0 && (
+            <div className="info-card">
+              <span className="card-number">Active Offers</span>
+              <h3>🏷️ Deals</h3>
+              {selectedMerchant.offers.map((o, i) => (
+                <p key={i}>• {o}</p>
+              ))}
+            </div>
+          )}
 
-          <div className="info-card">
-            <span className="card-number">03. Deterministic</span>
-            <h3>Anti-Spam Logic</h3>
-            <p>Built with strict engagement validators. Vera never loops, hallucinates clinical advice, or spams merchants.</p>
-          </div>
+          {selectedMerchant.signals.length > 0 && (
+            <div className="info-card">
+              <span className="card-number">Signals</span>
+              <h3>📡 Insights</h3>
+              {selectedMerchant.signals.map((s, i) => (
+                <p key={i}>• {s.replace(/_/g, ' ')}</p>
+              ))}
+            </div>
+          )}
         </aside>
 
-        {/* Main Glassmorphic Chat */}
+        {/* Chat */}
         <main className="chat-glass-container">
           <header className="chat-header">
             <div className="chat-header-left">
               <div className="avatar">V</div>
-              <h2>Vera Assistant</h2>
+              <h2>Vera — {selectedMerchant.name}</h2>
             </div>
             <div className="status-badge">
               <div className="status-dot"></div>
-              <span>System Online</span>
+              <span>Online</span>
             </div>
           </header>
 
           <div className="chat-messages">
             {messages.length === 0 && !isLoading && (
               <div style={{ textAlign: 'center', color: 'var(--text-secondary)', marginTop: '2rem' }}>
-                Establishing neural link...
+                Starting conversation...
               </div>
             )}
-            
+
             {messages.map((msg, idx) => (
               <div key={idx} className={`message-wrapper ${msg.role === 'vera' ? 'message-vera-wrapper' : 'message-user-wrapper'}`}>
                 <div className={`message-bubble ${msg.role === 'vera' ? 'message-vera' : 'message-user'}`}>
@@ -187,7 +280,7 @@ function App() {
                 </div>
               </div>
             ))}
-            
+
             {isLoading && (
               <div className="message-wrapper message-vera-wrapper">
                 <div className="typing-indicator">
@@ -202,12 +295,12 @@ function App() {
 
           <form className="chat-input-area" onSubmit={handleSend}>
             <div className="input-wrapper">
-              <input 
-                type="text" 
+              <input
+                type="text"
                 className="chat-input"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Message Vera..."
+                placeholder={`Message Vera as ${selectedMerchant.owner}...`}
                 disabled={isLoading}
               />
             </div>
@@ -218,7 +311,7 @@ function App() {
             </button>
           </form>
         </main>
-        
+
       </div>
     </>
   );

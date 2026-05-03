@@ -169,15 +169,18 @@ def test_universal_prompt_with_customer():
 
 @pytest.mark.asyncio
 async def test_compose_message_research_digest():
-    """End-to-end composition with mocked Claude response."""
-    mock_content = MagicMock()
-    mock_content.text = MOCK_LLM_RESPONSE
+    """End-to-end composition with mocked Groq response."""
+    mock_message = MagicMock()
+    mock_message.content = MOCK_LLM_RESPONSE
+
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
 
     mock_response = MagicMock()
-    mock_response.content = [mock_content]
+    mock_response.choices = [mock_choice]
 
     with patch("composer.client") as mock_client:
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         from composer import compose_message
         result = await compose_message(

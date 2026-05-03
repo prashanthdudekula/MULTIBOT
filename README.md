@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Vera** is magicpin's merchant AI assistant. This bot receives structured context about merchants, categories, and trigger events, then uses Claude (Anthropic) to compose highly personalized WhatsApp-style messages that engage merchants in meaningful conversations.
+**Vera** is magicpin's merchant AI assistant. This bot receives structured context about merchants, categories, and trigger events, then uses Groq (Llama 3.3) to compose highly personalized WhatsApp-style messages that engage merchants in meaningful conversations.
 
 ---
 
@@ -68,7 +68,7 @@ pip install -r requirements.txt
 
 # 3. Set up environment
 copy .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
+# Edit .env and add your GROQ_API_KEY
 
 # 4. Run the bot
 python -m uvicorn bot:app --host 0.0.0.0 --port 8080
@@ -87,8 +87,8 @@ pytest tests/ -v
 
 | Variable | Default | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | (required) | Your Anthropic API key |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-5` | Claude model to use |
+| `GROQ_API_KEY` | (required) | Your Groq API key |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Llama model to use |
 | `COMPOSER_MAX_TOKENS` | `600` | Max tokens per LLM call |
 | `COMPOSER_TEMPERATURE` | `0.7` | LLM temperature |
 | `TEAM_NAME` | `MULTIBOTS` | Shown in `/v1/metadata` |
@@ -111,4 +111,4 @@ pytest tests/ -v
 
 ## Model
 
-**Claude Sonnet 4.5** (Anthropic) — balances quality, speed, and cost. Configurable via `ANTHROPIC_MODEL` env var.
+**Llama 3.3 70B Versatile** (Groq) — balances incredible speed, quality, and JSON enforcement. Configurable via `GROQ_MODEL` env var.

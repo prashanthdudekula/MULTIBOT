@@ -105,6 +105,12 @@ async def healthz():
     }
 
 
+@app.get("/healthz")
+async def healthz_root():
+    """Alias health check for hosting platforms that expect /healthz."""
+    return await healthz()
+
+
 # ============================================================================
 # 2. GET /v1/metadata
 # ============================================================================

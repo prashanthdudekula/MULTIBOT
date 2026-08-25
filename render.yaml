@@ -6,10 +6,10 @@ services:
     startCommand: "uvicorn bot:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: "/healthz"
     envVars:
-      - key: GROQ_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
-      - key: GROQ_MODEL
-        value: "llama-3.3-70b-versatile"
+      - key: GEMINI_MODEL
+        value: "gemini-3.5-flash-lite"
       - key: TEAM_NAME
         value: "MULTIBOTS"
       - key: NODE_VERSION

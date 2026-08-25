@@ -192,7 +192,13 @@ async def _call_llm(prompt: str) -> Optional[str]:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=10))
     def _do_call():
-        url = f"{GEMINI_API_URL}/{MODEL}:generateContent?key={_api_key}"
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
+        if not api_key:
+            logger.error("GEMINI_API_KEY is missing or empty in environment variables!")
+            return None
+            
+        url = f"{GEMINI_API_URL}/{model_name}:generateContent?key={api_key}"
         body_dict = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {

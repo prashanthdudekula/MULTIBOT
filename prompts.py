@@ -9,37 +9,76 @@ import json
 # Shared constants
 # ============================================================================
 
-JUDGING_RUBRIC_CONSTRAINTS = """
-PERFECT SCORE CONSTRAINTS (Strictly adhere to these 5 pillars to score 50/50):
-
-1. DECISION QUALITY: Do not repeat every available fact. Pick the SINGLE best signal from the Trigger Event that should drive the next message. Synthesize Trigger + Merchant State + Category Fit logically.
-2. SPECIFICITY: You MUST use exact numbers, real dates, or specific local facts derived purely from the Trigger Payload or Merchant Context. Avoid generic hype. (e.g., If views are up 45%, say "45%").
-3. CATEGORY FIT: Maintain the exact requested Category Voice tone. If the tone is clinical/utility-first, do not use marketing hype.
-4. MERCHANT FIT: Personalize the message to the merchant. Reference their exact active_offers or prior behavior if it logically connects to the Trigger Event.
-5. ENGAGEMENT COMPULSION: End with a sharp hook grounded in real context. Give ONE strong reason to reply now with a low-friction next action (e.g., a simple Yes/No binary commit). Generic messages lose.
-"""
 
 ANTI_PATTERNS = """
-ANTI-PATTERNS (strictly avoid):
-  ✗ Generic offers: "30% off", "flat 99", "special discount"
-  ✗ Multiple CTAs: only ONE clear, low-effort action (preferably binary Yes/No)
+ANTI-PATTERNS (strictly avoid — each violation costs points):
+  ✗ Generic offers: "30% off", "flat 99", "special discount" — only mention offers that exist in merchant context
+  ✗ Multiple CTAs: you must end the message with EXACTLY ONE simple yes/no question. Do NOT include multiple asks.
   ✗ Buried CTA: CTA must be the VERY LAST sentence
   ✗ Long preamble: never start with "I hope this finds you" or "I'm reaching out"
   ✗ Re-introduction: don't say "Hi, I'm Vera" unless turn_number == 1
-  ✗ Hallucinated data: NEVER invent claims, numbers, or features. Only cite facts from the context.
+  ✗ Hallucinated data: NEVER invent claims, numbers, or features. Only cite facts from the provided context.
   ✗ Repetition: don't echo the previous message verbatim
+  ✗ Marketing buzzwords in clinical categories: no "amazing", "incredible", "game-changer" for dentists/pharmacies
+  ✗ Vague statements: no "many customers", "significant growth", "great results" — use exact numbers
 """
 
 JSON_FORMAT = """
 OUTPUT FORMAT (strict JSON, nothing else):
 {
-  "thinking": "<1-2 sentences mapping the Trigger to Merchant State to decide the single best signal (Decision Quality)>",
-  "body": "<WhatsApp message text, ≤280 chars. Must include exact numbers (Specificity) and match tone (Category Fit)>",
+  "thinking": "<1-2 sentences: which SINGLE signal did you pick and WHY it connects to this merchant's situation right now>",
+  "body": "<WhatsApp message text, ≤280 chars. MUST include exact numbers from PRIMARY SIGNAL. MUST match the Category Voice tone. MUST end with exactly ONE yes/no question from OBJECTIVE.>",
   "cta": "<open_ended | yes_no_choice | booking_slots | greeting>",
-  "rationale": "<1 sentence explaining why this hook forces engagement (Engagement Compulsion)>"
+  "rationale": "<1 sentence explaining the psychological lever used: loss_aversion / curiosity_gap / social_proof / urgency / peer_comparison>"
 }
 Do NOT wrap in markdown. Do NOT add any text outside the JSON object.
 """
+
+# ============================================================================
+# Category Voice Guides (injected into prompts for Category Fit)
+# ============================================================================
+
+CATEGORY_VOICE_GUIDES = {
+    "dentists": """CATEGORY VOICE — DENTISTS (peer_clinical):
+  - Write as a PEER professional, NOT a salesperson. Use "Dr." prefix.
+  - Tone: clinical, respectful, collegial. Like one dentist texting another.
+  - OK to use: fluoride varnish, scaling, caries, OPG, RCT, implant, aligner
+  - NEVER use: "guaranteed", "100% safe", "miracle", "best in city", marketing hype
+  - Style examples: "Worth a look — JIDA Oct 2026 p.14", "This likely affects your high-risk adult cohort"
+  - Register: respectful_collegial — share data, cite sources, be concise""",
+  
+    "salons": """CATEGORY VOICE — SALONS (warm_practical):
+  - Write as an approachable expert friend, warm but business-savvy.
+  - Tone: friendly, practical, encouraging. Like a senior stylist giving a tip.
+  - OK to use: balayage, keratin, smoothening, hair spa, olaplex, booking
+  - NEVER use: "guaranteed glow", "permanent results", "instant transformation", "miracle"
+  - Style examples: "Bridal season is starting — bookings usually 2x normal", "Your Saturday 5-7pm slot has been strongest this month"
+  - Register: approachable_expert — practical business tips with warmth""",
+  
+    "restaurants": """CATEGORY VOICE — RESTAURANTS (warm_busy_practical):
+  - Write as a fellow restaurant operator who gets the hustle.
+  - Tone: warm, busy, practical. Operator-to-operator. Brief, no fluff.
+  - OK to use: footfall, covers, AOV, table turnover, thali, biryani, reservations
+  - NEVER use: "best food in city", "guaranteed packed house", "miracle marketing"
+  - Style examples: "Quick one — IPL match nights have been 1.5x your weekday avg", "biryani delivery searches in your area up 28%"
+  - Register: fellow_operator — respect their time, get to the point""",
+  
+    "gyms": """CATEGORY VOICE — GYMS (energetic_disciplined):
+  - Write as a coach/mentor, energetic but data-driven.
+  - Tone: motivational, disciplined, direct. Like a head coach giving a pep talk with numbers.
+  - OK to use: footfall, membership churn, PT sessions, HIIT, functional, split, retention
+  - NEVER use: "guaranteed weight loss", "shred in 7 days", "miracle transformation"
+  - Style examples: "Your weekday 7-9pm slot has been at 90%+ capacity all month", "April drop-off is normal; bookings recover by 2nd week May"
+  - Register: coach_to_member — direct, encouraging, data-backed""",
+  
+    "pharmacies": """CATEGORY VOICE — PHARMACIES (trustworthy_precise):
+  - Write as a trusted neighbourhood pharmacist advisor.
+  - Tone: trustworthy, precise, no-nonsense. Facts and figures, not hype.
+  - OK to use: OTC, schedule H, generic, branded, molecule, MRP, expiry, batch
+  - NEVER use: "miracle cure", "guaranteed result", "100% safe", "best price" without data
+  - Style examples: "Your repeat-prescription customer count is up 18% this month", "Generic alternative for metformin just got approved — 30% lower MRP"
+  - Register: neighbourhood_pharmacist — factual, concise, health-first"""
+}
 
 # ============================================================================
 # Universal Prompt Builder
@@ -49,6 +88,7 @@ def build_universal_trigger_prompt(
     category_context: Dict[str, Any],
     merchant_context: Dict[str, Any],
     trigger_context: Dict[str, Any],
+    decision: Any,
     customer_context: Optional[Dict[str, Any]] = None,
     strict: bool = False,
 ) -> str:
@@ -58,13 +98,19 @@ def build_universal_trigger_prompt(
     slug = category_context.get("slug", "unknown")
     voice = category_context.get("voice", {})
     tone = voice.get("tone", "professional")
-    taboos: List[str] = voice.get("taboos", [])
+    register = voice.get("register", "professional")
+    taboos: List[str] = voice.get("vocab_taboo", [])
+    tone_examples = voice.get("tone_examples", [])
+    
+    # Get category-specific voice guide
+    voice_guide = CATEGORY_VOICE_GUIDES.get(slug, f"Tone: {tone}. Register: {register}.")
     
     # 2. Merchant extraction
     merchant_id = merchant_ctx_field(merchant_context, "merchant_id", "unknown")
     merchant_name = merchant_ctx_field(merchant_context, ["identity", "name"], "there")
     merchant_lang = merchant_ctx_field(merchant_context, ["identity", "language_pref"], "en")
     owner_name = merchant_ctx_field(merchant_context, ["identity", "owner_first_name"], "Partner")
+    locality = merchant_ctx_field(merchant_context, ["identity", "locality"], "your area")
     perf = merchant_context.get("performance", {})
     active_offers = [o.get("title", "") for o in merchant_context.get("offers", []) if o.get("status") == "active"]
 
@@ -79,7 +125,7 @@ def build_universal_trigger_prompt(
         customer_name = customer_context.get("identity", {}).get("name", "there")
         customer_lang = customer_context.get("identity", {}).get("language_pref", "en")
         role_block = f"""
-You are Vera, composing a message FROM {merchant_name} TO customer {customer_name}.
+You are composing a message FROM {merchant_name} TO customer {customer_name}.
 Write directly to the customer on behalf of the merchant. DO NOT write to the merchant.
 CUSTOMER NAME: {customer_name}
 CUSTOMER LANG: {customer_lang}
@@ -87,40 +133,58 @@ CUSTOMER DATA: {json.dumps(customer_context.get('relationship', {}))}
 """
     else:
         role_block = f"""
-You are Vera, magicpin's merchant AI assistant, composing a message TO merchant {owner_name}.
+You are Vera, magicpin's merchant AI assistant, composing a WhatsApp message TO merchant owner {owner_name}.
 Write directly to the merchant to help them grow their business.
 MERCHANT OWNER: {owner_name}
 MERCHANT LANG: {merchant_lang}
+"""
+
+    # Build urgency block
+    urgency_block = ""
+    if hasattr(decision, 'urgency_hook') and decision.urgency_hook:
+        urgency_block = f"""
+URGENCY HOOK (weave this into your message to create engagement compulsion):
+  {decision.urgency_hook}
 """
 
     prompt = f"""{role_block}
 
 MERCHANT CONTEXT:
   name: {merchant_name}
+  owner: {owner_name}
+  locality: {locality}
   category: {slug}
-  performance: {json.dumps(perf)}
-  active_offers: {active_offers if active_offers else 'none'}
-  signals: {merchant_context.get('signals', [])}
+  active_offers: {', '.join(active_offers) if active_offers else 'none'}
+  performance: views={perf.get('views', '?')}, calls={perf.get('calls', '?')}, ctr={perf.get('ctr', '?')}
 
-CATEGORY VOICE:
-  tone: {tone}
-  taboos: {', '.join(taboos) if taboos else 'none'}
+{voice_guide}
 
-TRIGGER EVENT (Why we are messaging now):
-  kind: {trigger_kind}
-  source: {trigger_source}
-  payload: {json.dumps(trigger_payload)}
-  
-{JUDGING_RUBRIC_CONSTRAINTS}
+DETERMINISTIC DECISION (You MUST follow this exactly — do NOT deviate):
+  PRIMARY SIGNAL: {decision.primary_signal}
+  SUPPORTING FACT: {decision.supporting_fact}
+  OBJECTIVE: {decision.recommended_action}
+{urgency_block}
+SCORING RULES (each dimension is scored 0-10, aim for 10/10 on all):
+
+1. DECISION QUALITY (10/10): Your message must clearly connect the PRIMARY SIGNAL to WHY it matters for THIS merchant RIGHT NOW. Show cause-and-effect reasoning, not just stating facts.
+
+2. SPECIFICITY (10/10): You MUST use the exact numbers from PRIMARY SIGNAL and SUPPORTING FACT. Every claim must be verifiable. No rounding, no generalizing. If views are 120, say "120".
+
+3. CATEGORY FIT (10/10): Follow the Category Voice guide EXACTLY. Match the tone, register, and allowed vocabulary. NEVER use taboo words.
+
+4. MERCHANT FIT (10/10): Use their exact name ({merchant_name}), owner name ({owner_name}), and locality ({locality}). Reference their actual active offers if relevant.
+
+5. ENGAGEMENT COMPULSION (10/10): End with EXACTLY ONE low-friction yes/no question from the OBJECTIVE. Weave in urgency/loss-aversion from the URGENCY HOOK.
+
 {ANTI_PATTERNS}
 
 TASK:
-  - The TRIGGER EVENT is the entire reason for this message. Analyze the trigger payload and act on it.
-  - If writing to merchant: use the category tone ({tone}); address the owner.
-  - If writing to customer: be polite and represent the merchant's brand.
+  - Follow the OBJECTIVE in DETERMINISTIC DECISION exactly.
+  - Base your message ONLY on PRIMARY SIGNAL and SUPPORTING FACT. Do NOT invent other facts.
+  - Match the Category Voice tone ({tone}) and register ({register}).
   - Keep body ≤280 characters.
   - Use Hinglish if language preference includes 'hi'.
-  - CTA must be in the last sentence.
+  - CTA must be in the LAST sentence and must be a simple yes/no question.
 
 {JSON_FORMAT}
 """
@@ -142,6 +206,8 @@ def build_followup_prompt(
     merchant_name = merchant_ctx_field(merchant_context, ["identity", "name"], "there")
     slug = category_context.get("slug", "unknown") if category_context else "unknown"
     lang_pref = merchant_ctx_field(merchant_context, ["identity", "language_pref"], "en")
+    voice = category_context.get("voice", {}) if category_context else {}
+    tone = voice.get("tone", "professional")
 
     history_text = "\n".join(
         f"  [{t['role'].upper()}]: {t['message']}" for t in conversation_history[-6:]
@@ -161,6 +227,7 @@ RECENT CONVERSATION:
 
 TASK:
   - Respond naturally and helpfully to the merchant's intent
+  - Match the category tone ({tone})
   - Advance the conversation toward a concrete action
   - Keep body ≤280 characters
   - No re-introduction

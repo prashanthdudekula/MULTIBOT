@@ -1,14 +1,15 @@
 # composer.py
-# Async LLM composition pipeline using Anthropic Claude.
+# Async LLM composition pipeline using Gemini REST API.
 # Handles routing by trigger kind, re-prompting on validation failures,
 # and fallback JSON extraction.
 
 import os
 import json
 import logging
+import urllib.request
+import urllib.error
 from typing import Optional, Dict, Any
 
-import groq
 from dotenv import load_dotenv
 
 from prompts import (
@@ -16,23 +17,26 @@ from prompts import (
     build_followup_prompt,
 )
 from validators import should_re_prompt, extract_json_from_response
+from decision_engine import evaluate_signals
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# Client setup
+# Client setup — Direct REST API (no SDK dependency)
 # ============================================================================
 
-_api_key = os.environ.get("GROQ_API_KEY")
+_api_key = os.environ.get("GEMINI_API_KEY")
 if not _api_key:
-    logger.warning("GROQ_API_KEY not set — LLM calls will fail.")
+    logger.warning("GEMINI_API_KEY not set — LLM calls will fail.")
 
-client = groq.AsyncGroq(api_key=_api_key)
+import asyncio
 
-MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-MAX_TOKENS = int(os.environ.get("COMPOSER_MAX_TOKENS", "600"))
-TEMPERATURE = float(os.environ.get("COMPOSER_TEMPERATURE", "0.7"))
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+TEMPERATURE = float(os.environ.get("COMPOSER_TEMPERATURE", "0.1"))
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+
+api_semaphore = asyncio.Semaphore(2)
 
 # ============================================================================
 # Main composition entry point
@@ -59,12 +63,20 @@ async def compose_message(
     for attempt in range(3):  # up to 3 attempts (initial + 2 retries)
         use_strict = strict or (attempt > 0)  # escalate to strict on retries
 
+        # Evaluate deterministic signals
+        decision = evaluate_signals(
+            merchant_context=merchant_context,
+            trigger_context=trigger_context,
+            category_context=category_context
+        )
+
         # Route to the correct prompt builder
         prompt = _build_prompt(
             trigger_kind=trigger_kind,
             category_context=category_context,
             merchant_context=merchant_context,
             trigger_context=trigger_context,
+            decision=decision,
             customer_context=customer_context,
             strict=use_strict,
         )
@@ -73,7 +85,7 @@ async def compose_message(
             logger.warning(f"Empty prompt for trigger_kind={trigger_kind}, skipping.")
             return None
 
-        # Call Claude
+        # Call Gemini
         raw_text = await _call_llm(prompt)
         if not raw_text:
             logger.error(f"LLM returned empty response on attempt {attempt + 1}")
@@ -132,6 +144,8 @@ async def compose_followup(
     )
 
     raw_text = await _call_llm(prompt)
+    if raw_text == "__RATE_LIMIT__":
+        return "⚠️ Rate limit hit. Please wait 30 seconds before sending another message."
     if not raw_text:
         return _safe_fallback(intent)
 
@@ -156,6 +170,7 @@ def _build_prompt(
     category_context: dict,
     merchant_context: dict,
     trigger_context: dict,
+    decision: Any,
     customer_context: Optional[dict],
     strict: bool,
 ) -> str:
@@ -164,21 +179,61 @@ def _build_prompt(
         category_context=category_context,
         merchant_context=merchant_context,
         trigger_context=trigger_context,
+        decision=decision,
         customer_context=customer_context,
         strict=strict,
     )
 
 
 async def _call_llm(prompt: str) -> Optional[str]:
-    """Call OpenAI and return the raw text response."""
-    try:
-        response = await client.chat.completions.create(
-            model=MODEL,
-            max_tokens=MAX_TOKENS,
-            temperature=TEMPERATURE,
-            messages=[{"role": "user", "content": prompt}],
+    """Call Gemini via direct REST API and return the raw text response."""
+    import asyncio
+    from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=10))
+    def _do_call():
+        url = f"{GEMINI_API_URL}/{MODEL}:generateContent?key={_api_key}"
+        body_dict = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": TEMPERATURE,
+                "maxOutputTokens": 600
+            }
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body_dict).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
         )
-        return response.choices[0].message.content
+        try:
+            resp = urllib.request.urlopen(req, timeout=45)
+            data = json.loads(resp.read().decode("utf-8"))
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                logger.warning(f"Rate limited, retrying...")
+                raise e
+            error_body = ""
+            try:
+                error_body = e.read().decode("utf-8")
+            except:
+                pass
+            logger.error(f"Gemini HTTP {e.code}: {error_body[:200]}")
+            raise e
+        except Exception as e:
+            err_str = str(e).lower()
+            if "429" in err_str or "quota" in err_str:
+                raise e
+            logger.error(f"Unexpected LLM error: {e}")
+            return None
+
+    try:
+        async with api_semaphore:
+            result = await asyncio.to_thread(_do_call)
+        return result
+    except RetryError:
+        logger.error("Rate limit exceeded after all retries.")
+        return "__RATE_LIMIT__"
     except Exception as e:
         logger.error(f"Unexpected LLM error: {e}")
     return None

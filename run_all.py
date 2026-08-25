@@ -12,13 +12,13 @@ print("==================================================")
 
 # Determine the correct python executable
 python_exe = sys.executable
-if os.path.exists(r"d:\MULTIBOTS\venv\Scripts\python.exe"):
-    python_exe = r"d:\MULTIBOTS\venv\Scripts\python.exe"
+if os.path.exists(r"c:\Users\dudek\MULTIBOT\venv\Scripts\python.exe"):
+    python_exe = r"c:\Users\dudek\MULTIBOT\venv\Scripts\python.exe"
 
 # Start the uvicorn server as a background process
 server_process = subprocess.Popen(
     [python_exe, "-m", "uvicorn", "bot:app", "--host", "0.0.0.0", "--port", "8080"],
-    cwd=r"d:\MULTIBOTS"
+    cwd=r"c:\Users\dudek\MULTIBOT"
 )
 
 print("Waiting 5 seconds for the server to fully start up...")
@@ -35,7 +35,7 @@ print("==================================================")
 
 judge_process = subprocess.Popen(
     [python_exe, "judge_simulator.py"],
-    cwd=r"d:\MULTIBOTS\magicpin-ai-challenge",
+    cwd=r"c:\Users\dudek\MULTIBOT\magicpin-ai-challenge",
 )
 judge_process.wait()
 

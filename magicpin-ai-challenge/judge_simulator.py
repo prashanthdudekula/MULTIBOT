@@ -24,13 +24,16 @@ Author: magicpin AI Challenge Team
 BOT_URL = "http://localhost:8080"
 
 # Choose your LLM provider: "openai", "anthropic", "gemini", "deepseek", "groq", "ollama", "openrouter"
-LLM_PROVIDER = "groq"
+LLM_PROVIDER = "gemini"
 
 # Your API key (paste your key here)
-LLM_API_KEY = ""  # <-- PUT YOUR API KEY HERE
+import os
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env'))
+LLM_API_KEY = os.environ.get("GEMINI_API_KEY", "")  # <-- PUT YOUR API KEY HERE
 
 # Model to use (leave empty for default, or specify like "gpt-4o", "claude-3-5-sonnet-20241022", etc.)
-LLM_MODEL = ""  # <-- Optional: specify model or leave empty for default
+LLM_MODEL = os.environ.get("GEMINI_MODEL", "")  # <-- Optional: specify model or leave empty for default
 
 # For Ollama only: local server URL
 OLLAMA_URL = "http://localhost:11434"
@@ -102,7 +105,7 @@ def print_score_bar(dimension: str, score: int, max_score: int = 10):
     bar_filled = int((score / max_score) * 20)
     bar_empty = 20 - bar_filled
     color = Colors.GREEN if score >= 7 else Colors.YELLOW if score >= 4 else Colors.RED
-    print(f"  {dimension:22} [{color}{'█' * bar_filled}{Colors.DIM}{'░' * bar_empty}{Colors.RESET}] {color}{score:2}/{max_score}{Colors.RESET}")
+    print(f"  {dimension:22} [{color}{'#' * bar_filled}{Colors.DIM}{'-' * bar_empty}{Colors.RESET}] {color}{score:2}/{max_score}{Colors.RESET}")
 
 def print_reason(text: str):
     wrapped = text[:200] + "..." if len(text) > 200 else text
@@ -209,23 +212,54 @@ class AnthropicProvider(LLMProvider):
 class GeminiProvider(LLMProvider):
     def __init__(self, api_key: str, model: str = ""):
         self.api_key = api_key
-        self.model = model or "gemini-1.5-flash"
+        self.model = model or "gemini-3.5-flash-lite"
 
     def name(self) -> str:
         return f"Gemini ({self.model})"
 
     def complete(self, prompt: str, system: str = None) -> str:
+        import urllib.request as urlrequest
+        import urllib.error as urlerror
+        import json
+        from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
+        
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
-        body = json.dumps({
-            "contents": [{"parts": [{"text": full_prompt}]}],
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1500}
-        }).encode("utf-8")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
-        req = urlrequest.Request(url, data=body, headers={"Content-Type": "application/json"})
-        resp = urlrequest.urlopen(req, timeout=TIMEOUT_LLM)
-        data = json.loads(resp.read().decode("utf-8"))
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=2, min=5, max=60))
+        def _do_call():
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+            body_dict = {
+                "contents": [{"parts": [{"text": full_prompt}]}]
+            }
+            req = urlrequest.Request(
+                url,
+                data=json.dumps(body_dict).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            try:
+                resp = urlrequest.urlopen(req, timeout=TIMEOUT_LLM)
+                data = json.loads(resp.read().decode("utf-8"))
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except urlerror.HTTPError as e:
+                if e.code == 429:
+                    print(f"[WARN] Gemini Rate limited, retrying... ({e})")
+                    raise e
+                raise e
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "quota" in err_str or "too_many_requests" in err_str:
+                    print(f"[WARN] Gemini Rate limited, retrying... ({e})")
+                    raise e
+                raise e
+
+        try:
+            return _do_call()
+        except RetryError:
+            print("[FAIL] Gemini Rate limit exceeded after all retries.")
+            return ""
+        except Exception as e:
+            print(f"[FAIL] Unexpected LLM Error: {e}")
+            return ""
 
 
 class DeepSeekProvider(LLMProvider):

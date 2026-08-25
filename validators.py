@@ -6,7 +6,7 @@ import re
 from typing import Optional, Tuple
 
 MAX_CHARS = 1000         # Hard limit — judge will reject above this
-IDEAL_CHARS = 280        # WhatsApp-friendly target
+IDEAL_CHARS = 400        # WhatsApp-friendly target, relaxed to allow full Specificity logic
 MAX_RETRY_ATTEMPTS = 2   # Re-prompt at most this many times
 
 # ============================================================================
